@@ -1,5 +1,4 @@
-import { ButtonItem, PanelSectionRow, SliderField, TextField, ToggleField } from "@decky/ui";
-import { useState } from "react";
+import { ButtonItem, DialogButton, ModalRoot, PanelSectionRow, SliderField, ToggleField, showModal } from "@decky/ui";
 import { ConfigurationData, FLOW_SCALE, PERFORMANCE_MODE, OVERRIDE_PRESENT_MODE, PRESERVE_SWAPCHAIN_IMAGE_COUNT } from "../config/configSchema";
 
 interface ConfigurationSectionProps {
@@ -24,42 +23,74 @@ function ExecutableNamesField({
   appid?: string;
   onConfigChange: ConfigurationSectionProps["onConfigChange"];
 }) {
-  const [value, setValue] = useState("");
   // The Steam App ID is managed by the plugin and must stay untouched, so it
   // is filtered out of what the user edits.
   const names = activeIn.filter((entry) => entry !== appid);
 
-  const commit = (next: string[]) => {
-    void onConfigChange("active_in" as keyof ConfigurationData, next);
+  // A modal rather than an inline input: nothing focusable is added to the
+  // scrolling panel, which the gamepad navigator handles poorly, and the
+  // Steam keyboard opens reliably inside a dialog.
+  const openEditor = () => {
+    let closeModal = () => {};
+    let draft = names.join("\n");
+
+    const commit = (next: string[]) => {
+      void onConfigChange("active_in" as keyof ConfigurationData, next);
+    };
+
+    const modal = showModal(
+      <ModalRoot
+        bAllowFullSize
+        closeModal={() => closeModal()}
+        onCancel={() => closeModal()}
+      >
+        <div style={{ padding: "8px 16px 16px", display: "grid", gap: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 600 }}>Executable names</div>
+          <div style={{ opacity: 0.75, fontSize: 12, lineHeight: 1.4 }}>
+            Required on some ARM handhelds, where the Vulkan layer cannot match a
+            Steam App ID. Add the game&apos;s executable, one per line.
+          </div>
+          <textarea
+            value={draft}
+            onChange={(event) => {
+              draft = event.target.value;
+            }}
+            rows={4}
+            autoFocus
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              padding: 8,
+              resize: "vertical",
+            }}
+          />
+          <DialogButton
+            onClick={() => {
+              commit(parseNames(draft));
+              closeModal();
+            }}
+          >
+            Save
+          </DialogButton>
+          <DialogButton onClick={() => closeModal()}>Cancel</DialogButton>
+        </div>
+      </ModalRoot>,
+      undefined,
+      {
+        strTitle: "Executable names",
+        bNeverPopOut: true,
+        popupWidth: 620,
+        popupHeight: 460,
+      },
+    );
+    closeModal = modal.Close;
   };
 
   return (
     <PanelSectionRow>
-      <div style={{ padding: "6px 16px 10px 16px", width: "100%", boxSizing: "border-box" }}>
-        <div style={{ marginBottom: 4 }}>Executable names</div>
-        <div style={{ opacity: 0.75, fontSize: 12, lineHeight: 1.4 }}>
-          Required on some ARM handhelds, where the Vulkan layer cannot match a
-          Steam App ID. Add the game&apos;s executable, e.g.{" "}
-          <code>Game.exe</code>. One per line.
-        </div>
-        <TextField
-          value={value}
-          label="Executable name"
-          description="e.g. ASAMU-Win32-Shipping.exe"
-          onChange={(event) => setValue(event.target.value)}
-        />
-        <ButtonItem
-          layout="below"
-          onClick={() => commit(parseNames(value))}
-        >
-          Save executable name
-        </ButtonItem>
-        {names.length > 0 && (
-          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-            Currently: {names.join(", ")}
-          </div>
-        )}
-      </div>
+      <ButtonItem layout="below" onClick={openEditor}>
+        {names.length > 0 ? `Executable names (${names.length})` : "Set executable name"}
+      </ButtonItem>
     </PanelSectionRow>
   );
 }
