@@ -2,6 +2,7 @@ import { ButtonItem, Field, PanelSection, PanelSectionRow, Spinner } from "@deck
 import { useEffect, useState } from "react";
 import { RiArrowDownSFill, RiArrowUpSFill } from "react-icons/ri";
 import { getDebugFileContents, writeDebugReport, type DebugFileContent, type DebugFileContentsResult } from "../api/lsfgApi";
+import { showErrorToast, showSuccessToast } from "../utils/toastUtils";
 import t from "../i18n/i18n";
 
 function usePersistentCollapsed(key: string) {
@@ -69,32 +70,58 @@ function DebugFileSection({ file }: { file: DebugFileContent }) {
   );
 }
 
+function copyToClipboard(text: string): boolean {
+  // document.execCommand is the only channel a Decky frontend can rely on.
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+async function copyDebugReport() {
+  try {
+    const response = await writeDebugReport();
+    if (!response.report) {
+      showErrorToast("Copy failed", response.error || "The debug report is empty.");
+      return;
+    }
+    // The report is generated server side, so copying and writing share it.
+    if (copyToClipboard(response.report)) {
+      showSuccessToast("Debug report copied", "Paste it anywhere with Ctrl+V.");
+    } else {
+      showErrorToast("Copy failed", "The file was still written; see the report path.");
+    }
+    if (response.path) {
+      console.log("lsfg-vk debug report:", response.path);
+    }
+  } catch (error) {
+    showErrorToast("Copy failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function exportDebugReport() {
   try {
     const response = await writeDebugReport();
-    if (!response.success || !response.report) {
-      console.error("lsfg-vk debug export failed", response.error);
+    if (!response.success) {
+      showErrorToast("Export failed", response.error || "Could not write the report.");
       return;
     }
-    // The clipboard is the only channel a Decky frontend can rely on for
-    // getting text off the device, so the report is always copied.  The file
-    // stays on disk as a fallback for anyone browsing to it.
-    try {
-      const textarea = document.createElement("textarea");
-      textarea.value = response.report;
-      textarea.setAttribute("readonly", "true");
-      textarea.style.position = "fixed";
-      textarea.style.left = "-9999px";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-    } catch {
-      // Copying is best effort; the report file is still written.
-    }
-    console.log("lsfg-vk debug report written to", response.path, "\n" + response.report);
+    showSuccessToast(
+      "Debug report exported",
+      `${response.location === "Downloads" ? "Downloads" : "Home"}: ${response.path}`,
+    );
   } catch (error) {
-    console.error("lsfg-vk debug export failed", error);
+    showErrorToast("Export failed", error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -138,6 +165,17 @@ export function ConfigFileTab() {
         `}
       </style>
       <PanelSection title={t("NERD_CONFIG_FILE", "Config / Debug")}>
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            bottomSeparator="standard"
+            onClick={() => {
+              void copyDebugReport();
+            }}
+          >
+            Copy debug report
+          </ButtonItem>
+        </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem
             layout="below"

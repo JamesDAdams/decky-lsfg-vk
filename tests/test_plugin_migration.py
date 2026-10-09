@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -127,14 +128,36 @@ class PluginMigrationTests(unittest.TestCase):
             plugin.wrapper_service.sidecar_path = Path("/nonexistent/workarounds.json")
             plugin.flatpak_service.ownership_path = None
 
-            result = asyncio.run(plugin.write_debug_report())
+            # The report must land somewhere the user can reach: Decky runs as
+            # a system service, so /tmp is often a private namespace.
+            with tempfile.TemporaryDirectory() as temporary:
+                home = Path(temporary) / "home" / "deck"
+                (home / "Downloads").mkdir(parents=True)
+                plugin.installation_service.user_home = home
 
-            self.assertTrue(result["success"])
-            self.assertTrue(result["report"])
-            # The facts that explain an inert multiplier must be in the report.
-            for marker in ("host_is_arm", "cli_usable", "wrapper_exports_config",
-                           "lossless_scaling", "branch_status", "plugin_version"):
-                self.assertIn(marker, result["report"])
+                result = asyncio.run(plugin.write_debug_report())
+
+                self.assertTrue(result["success"])
+                self.assertTrue(result["report"])
+                self.assertEqual(result["location"], "Downloads")
+                self.assertEqual(Path(result["path"]).parent, home / "Downloads")
+                self.assertTrue(Path(result["path"]).is_file())
+                # The facts that explain an inert multiplier must be present.
+                for marker in ("host_is_arm", "cli_usable", "wrapper_exports_config",
+                               "lossless_scaling", "branch_status", "plugin_version"):
+                    self.assertIn(marker, result["report"])
+
+            # Without a Downloads directory the home directory is the fallback.
+            with tempfile.TemporaryDirectory() as temporary:
+                home = Path(temporary) / "home" / "deck"
+                home.mkdir(parents=True)
+                plugin.installation_service.user_home = home
+
+                result = asyncio.run(plugin.write_debug_report())
+
+                self.assertTrue(result["success"])
+                self.assertEqual(result["location"], "home")
+                self.assertTrue(Path(result["path"]).is_file())
         finally:
             self._restore(previous_decky, previous_tomllib, previous_plugin)
 

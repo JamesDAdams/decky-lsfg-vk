@@ -228,17 +228,32 @@ class Plugin:
         manifest = Path(__file__).resolve().parent.parent.parent / "package.json"
         return str(json.loads(manifest.read_text(encoding="utf-8")).get("version", "unknown"))
 
+    def _report_target(self) -> Path:
+        """Pick a location the user can actually reach.
+
+        Decky runs as a system service, so /tmp is frequently a private
+        namespace and the report would vanish from the user's point of view.
+        The user's Downloads directory is shared, so it is used when present
+        and the home directory is the fallback.
+        """
+        home = self.installation_service.user_home
+        candidate = home / "Downloads"
+        if candidate.is_dir():
+            return candidate / "lsfg-vk-debug-report.txt"
+        return home / "lsfg-vk-debug-report.txt"
+
     async def write_debug_report(self) -> Dict[str, Any]:
         """Write a debug report the user can hand to a maintainer.
 
-        Returns the path and the report text so the frontend can either copy
-        it or point the user at the file.
+        Returns the path, the report text and where it actually landed, so the
+        frontend can tell the user rather than staying silent on failure.
         """
         payload = await self.get_debug_file_contents()
-        import tempfile
-
-        target = Path(tempfile.gettempdir()) / "lsfg-vk-debug-report.txt"
-        lines = ["lsfg-vk Decky plugin debug report", "=" * 40, ""]
+        lines = [
+            "lsfg-vk Decky plugin debug report",
+            "=" * 40,
+            "",
+        ]
 
         for key, value in (payload.get("diagnostics") or {}).items():
             lines.append(f"[{key}]")
@@ -260,11 +275,24 @@ class Plugin:
             lines.append("")
 
         report = "\n".join(line.rstrip() for line in lines) + "\n"
-        target.write_text(report, encoding="utf-8")
+        target = self._report_target()
+        location = "Downloads" if target.parent.name == "Downloads" else "home"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(report, encoding="utf-8")
+        except Exception as error:
+            return {
+                "success": False,
+                "error": f"Could not write the report: {error}",
+                "path": str(target),
+                "location": location,
+                "report": report,
+            }
         return {
             "success": True,
             "error": None,
             "path": str(target),
+            "location": location,
             "report": report,
         }
 

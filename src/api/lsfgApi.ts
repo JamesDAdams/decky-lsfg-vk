@@ -194,4 +194,5 @@ export const writeDebugReport = callable<[], DebugReportResult>("write_debug_rep
 export interface DebugReportResult extends ApiResult {
   path?: string;
   report?: string;
+  location?: string;
 }
