@@ -44,10 +44,17 @@ def _normalize_active_in(value: Any) -> list[str]:
     if value in (None, ""):
         return []
     if isinstance(value, str):
-        return [value]
+        value = [value]
     if not isinstance(value, list):
         raise ValueError("active_in must be a string or list of strings")
-    return [str(item) for item in value if str(item)]
+    # A leading/trailing space is invisible in the config file and silently
+    # breaks matching, and duplicate entries only add noise.
+    unique: list[str] = []
+    for item in value:
+        entry = str(item).strip()
+        if entry and entry not in unique:
+            unique.append(entry)
+    return unique
 
 
 class ConfigurationManager:

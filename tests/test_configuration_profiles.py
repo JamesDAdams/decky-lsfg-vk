@@ -136,6 +136,44 @@ preserve_swapchain_image_count = false
         self.assertIn("Steam Game", data["profiles"])
         self.assertNotIn("flatpak:org.example.Game", data["profiles"])
 
+    def test_active_in_keeps_appid_plus_user_supplied_executables(self):
+        """The layer must be able to match a game more than one way.
+
+        The ARM layer has no Steam App ID matching, so a numeric appid alone
+        can never match any process.  Supplementary executable names keep the
+        profile reachable there, and costs nothing on x86-64.
+        """
+        result = self.service.update_game_config(
+            "278360",
+            "A Game",
+            {"multiplier": 3, "active_in": ["Game.exe", "SomeThread"]},
+        )
+
+        self.assertTrue(result["success"])
+        profile = result["config"]
+        self.assertIn("278360", profile["active_in"])
+        self.assertIn("Game.exe", profile["active_in"])
+        self.assertIn("SomeThread", profile["active_in"])
+
+    def test_active_in_without_extra_names_stays_the_appid(self):
+        result = self.service.update_game_config("278360", "A Game", {"multiplier": 3})
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["config"]["active_in"], ["278360"])
+
+    def test_active_in_deduplicates_repeated_entries(self):
+        result = self.service.update_game_config(
+            "278360",
+            "A Game",
+            {"active_in": ["Game.exe", "Game.exe", "", "  "]},
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(
+            [entry for entry in result["config"]["active_in"] if entry != "278360"],
+            ["Game.exe"],
+        )
+
     def test_global_config_update_does_not_change_profile_values(self):
         self.service.update_game_config("123", "Steam Game", {"multiplier": 2})
 

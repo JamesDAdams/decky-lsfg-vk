@@ -107,6 +107,27 @@ class ConfigurationService(BaseService):
         except Exception as error:
             return self._error_response(dict, str(error), global_config=None)
 
+    @staticmethod
+    def _active_in_entries(config: Dict[str, Any], appid: str) -> list[str]:
+        """Build the active_in list for a Steam game profile.
+
+        The Steam App ID is always kept first, because the official layer
+        matches it.  The Android-based ARM layer has no App ID matching at
+        all, so any executable names the user supplied are appended to give
+        the layer a way to reach the profile there.  Harmless on x86-64.
+        """
+        requested = config.get("active_in")
+        if requested in (None, ""):
+            requested = []
+        if isinstance(requested, str):
+            requested = [requested]
+        entries = [appid]
+        for item in requested or []:
+            entry = str(item).strip()
+            if entry and entry not in entries:
+                entries.append(entry)
+        return entries
+
     def update_game_config(self, appid: str, game_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
         try:
             data = self._get_profile_data()
@@ -116,7 +137,7 @@ class ConfigurationService(BaseService):
             if not config.get("dll"):
                 merged_config["dll"] = data["global_config"].get("dll", "")
             validated = self._public_config(merged_config)
-            validated["active_in"] = [str(appid)]
+            validated["active_in"] = self._active_in_entries(config, str(appid))
             if old_name and old_name != name:
                 data["profiles"].pop(old_name, None)
             data["profiles"][name] = validated
