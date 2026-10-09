@@ -1,4 +1,4 @@
-import { ButtonItem, DialogButton, ModalRoot, PanelSectionRow, SliderField, ToggleField, showModal } from "@decky/ui";
+import { ButtonItem, DialogButton, ModalRoot, PanelSectionRow, SliderField, TextField, ToggleField, showModal } from "@decky/ui";
 import { ConfigurationData, FLOW_SCALE, PERFORMANCE_MODE, OVERRIDE_PRESENT_MODE, PRESERVE_SWAPCHAIN_IMAGE_COUNT } from "../config/configSchema";
 
 interface ConfigurationSectionProps {
@@ -50,18 +50,13 @@ function ExecutableNamesField({
             Required on some ARM handhelds, where the Vulkan layer cannot match a
             Steam App ID. Add the game&apos;s executable, one per line.
           </div>
-          <textarea
+          {/* TextField is the component that raises the Steam keyboard.  A raw
+              <textarea> is inert on a gamepad, and the reason the keyboard
+              never opened previously. */}
+          <TextField
             value={draft}
             onChange={(event) => {
               draft = event.target.value;
-            }}
-            rows={4}
-            autoFocus
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              padding: 8,
-              resize: "vertical",
             }}
           />
           <DialogButton
