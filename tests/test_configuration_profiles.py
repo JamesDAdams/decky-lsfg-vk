@@ -155,6 +155,26 @@ preserve_swapchain_image_count = false
         self.assertIn("Game.exe", profile["active_in"])
         self.assertIn("SomeThread", profile["active_in"])
 
+    def test_game_still_discoverable_with_extra_active_in_entries(self):
+        """A profile must stay listed once executable names are added.
+
+        get_game_configs only recognises a game when its active_in holds
+        exactly one entry.  Dropping profiles that also carry executable
+        names makes the UI fall back to defaults and then overwrite them,
+        which silently wipes the user's configuration.
+        """
+        self.service.update_game_config(
+            "278360",
+            "A Story About My Uncle",
+            {"multiplier": 3, "active_in": ["ASAMU-Win32-Shipping.exe"]},
+        )
+
+        games = self.service.get_game_configs()["games"]
+
+        self.assertEqual([game["appid"] for game in games], ["278360"])
+        self.assertEqual(games[0]["config"]["multiplier"], 3)
+        self.assertIn("ASAMU-Win32-Shipping.exe", games[0]["config"]["active_in"])
+
     def test_active_in_without_extra_names_stays_the_appid(self):
         result = self.service.update_game_config("278360", "A Game", {"multiplier": 3})
 

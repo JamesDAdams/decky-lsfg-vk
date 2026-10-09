@@ -85,9 +85,19 @@ class ConfigurationService(BaseService):
             games = []
             for name, raw in data["profiles"].items():
                 active_in = raw.get("active_in", [])
-                if len(active_in) != 1 or not re.fullmatch(r"-?[0-9]+", str(active_in[0])):
+                appids = [
+                    entry
+                    for entry in active_in
+                    if re.fullmatch(r"-?[0-9]+", str(entry))
+                ]
+                # The App ID stays first, but a profile may also carry
+                # executable names so the layer can match it on hosts without
+                # App ID support.  Requiring exactly one entry would hide
+                # those games, and the UI would then fall back to defaults
+                # and overwrite the saved configuration.
+                if len(appids) != 1:
                     continue
-                games.append({"appid": str(active_in[0]), "profile": name, "config": self._public_config(raw)})
+                games.append({"appid": str(appids[0]), "profile": name, "config": self._public_config(raw)})
             return self._success_response(dict, global_config=dict(data["global_config"]), games=games)
         except Exception as error:
             self.log.error(f"Error reading game configs: {error}")
