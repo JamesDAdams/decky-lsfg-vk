@@ -155,6 +155,25 @@ preserve_swapchain_image_count = false
         self.assertIn("Game.exe", profile["active_in"])
         self.assertIn("SomeThread", profile["active_in"])
 
+    def test_partial_save_preserves_the_rest_of_the_profile(self):
+        """A save that carries one field must not reset the others.
+
+        The executable-name editor only sends active_in, and the multiplier
+        slider only sends multiplier.  Merging onto the saved profile keeps
+        both instead of quietly falling back to defaults.
+        """
+        self.service.update_game_config(
+            "278360", "A Story About My Uncle", {"multiplier": 3, "flow_scale": 0.7}
+        )
+
+        result = self.service.update_game_config(
+            "278360", "A Story About My Uncle", {"active_in": ["ASAMU-Win32-Shipping.exe"]}
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["config"]["multiplier"], 3)
+        self.assertEqual(result["config"]["flow_scale"], 0.7)
+
     def test_game_still_discoverable_with_extra_active_in_entries(self):
         """A profile must stay listed once executable names are added.
 

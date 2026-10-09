@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ButtonItem, DialogButton, ModalRoot, PanelSectionRow, SliderField, TextField, ToggleField, showModal } from "@decky/ui";
 import { ConfigurationData, FLOW_SCALE, PERFORMANCE_MODE, OVERRIDE_PRESENT_MODE, PRESERVE_SWAPCHAIN_IMAGE_COUNT } from "../config/configSchema";
 
@@ -32,7 +33,7 @@ function ExecutableNamesField({
   // Steam keyboard opens reliably inside a dialog.
   const openEditor = () => {
     let closeModal = () => {};
-    let draft = names.join("\n");
+    const [draft, setDraft] = useState(names.join("\n"));
 
     const commit = (next: string[]) => {
       void onConfigChange("active_in" as keyof ConfigurationData, next);
@@ -55,9 +56,7 @@ function ExecutableNamesField({
               never opened previously. */}
           <TextField
             value={draft}
-            onChange={(event) => {
-              draft = event.target.value;
-            }}
+            onChange={(event) => setDraft(event.target.value)}
           />
           <DialogButton
             onClick={() => {

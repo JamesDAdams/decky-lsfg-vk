@@ -141,10 +141,17 @@ class ConfigurationService(BaseService):
     def update_game_config(self, appid: str, game_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
         try:
             data = self._get_profile_data()
-            old_name, _ = self._profile_for_appid(data, appid)
+            old_name, old_profile = self._profile_for_appid(data, appid)
             name = self._profile_name(data, appid, game_name)
-            merged_config = {**data["global_config"], **{key: value for key, value in config.items() if key != "no_fp16"}}
-            if not config.get("dll"):
+            # Start from what is already saved so a caller that only carries
+            # the fields it changed cannot silently reset the rest to
+            # defaults -- the UI often sends just the edited field.
+            merged_config = {
+                **(old_profile or {}),
+                **{key: value for key, value in config.items() if key != "no_fp16"},
+            }
+            merged_config = {**data["global_config"], **merged_config}
+            if not merged_config.get("dll"):
                 merged_config["dll"] = data["global_config"].get("dll", "")
             validated = self._public_config(merged_config)
             validated["active_in"] = self._active_in_entries(config, str(appid))
