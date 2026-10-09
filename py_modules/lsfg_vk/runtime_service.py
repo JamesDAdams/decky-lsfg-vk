@@ -17,6 +17,10 @@ class RuntimeService(BaseService):
         "lsfg-vk-cli is only built for x86-64, so on-device validation is "
         "unavailable on this host"
     )
+    CLI_UNSUPPORTED_STATUS_DETECTED = (
+        "Lossless Scaling detected (x86-64 CLI validation unavailable on this host)"
+    )
+    DLL_NOT_FOUND_STATUS = "Lossless Scaling's lsfg-vk.dll was not found"
 
     def __init__(self, logger=None):
         super().__init__(logger)
@@ -123,7 +127,7 @@ class RuntimeService(BaseService):
         if self.DLL_MISSING_MARKER in output:
             return {
                 "installed": False,
-                "status": "Lossless Scaling's lsfg-vk.dll was not found",
+                "status": self.DLL_NOT_FOUND_STATUS,
             }
 
         if self.DLL_NONE_MARKER in output:

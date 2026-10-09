@@ -1,4 +1,5 @@
 import io
+import json
 import subprocess
 import sys
 import tarfile
@@ -18,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from lsfg_vk.base_service import BaseService
 from lsfg_vk.constants import (
     ARM_ARCHIVE_FILENAME,
-    ARM_LIB_FILENAME,
+    ARM_LIB_SOURCE_FILENAME,
     ARMADA_DEVICE_ENV,
     ARMADA_GAME_LAUNCH,
 )
@@ -28,8 +29,25 @@ from lsfg_vk.runtime_service import RuntimeService
 from lsfg_vk.wrapper_service import WrapperService
 
 
-# a real aarch64 .so is not required: a recognisable placeholder is enough
-ARM_LAYER_BYTES = b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8 + b"\x03\x00\xb7\x00\x01\x00" + b"\x00" * 8
+AArch64_ELF_CLASS = 2  # ELFCLASS64
+LITTLE_ENDIAN = 1  # ELFDATA2LSB
+EM_X86_64 = 62
+EM_AARCH64 = 183
+
+
+def _elf_header(machine: int, elf_class: int = AArch64_ELF_CLASS) -> bytes:
+    """Build a minimal ELF64 header, since only e_machine is inspected."""
+    return (
+        b"\x7fELF"
+        + bytes([elf_class, LITTLE_ENDIAN, 1, 0])
+        + b"\x00" * 8
+        + (3).to_bytes(2, "little")  # e_type: ET_DYN
+        + machine.to_bytes(2, "little")  # e_machine
+        + b"\x00" * 8
+    )
+
+
+ARM_LAYER_BYTES = _elf_header(EM_AARCH64)
 
 
 def _arm_archive(path: Path) -> Path:
@@ -43,13 +61,13 @@ def _arm_archive(path: Path) -> Path:
             info.size = len(content)
             bundle.addfile(info, io.BytesIO(content))
 
-        add(ARM_LIB_FILENAME, ARM_LAYER_BYTES)
+        add(ARM_LIB_SOURCE_FILENAME, ARM_LAYER_BYTES)
         add(
             "VkLayer_LSFGVK_frame_generation.json",
             (
                 '{"file_format_version":"1.1.0","layer":{"name":"VK_LAYER_LSFGVK_frame_generation",'
                 '"description":"Lossless Scaling frame generation layer",'
-                f'"implementation_version":"2","library_path":"{ARM_LIB_FILENAME}","type":"GLOBAL",'
+                f'"implementation_version":"2","library_path":"{ARM_LIB_SOURCE_FILENAME}","type":"GLOBAL",'
                 '"api_version":"1.4.328","disable_environment":{"DISABLE_LSFGVK":"1"}}}'
             ).encode(),
         )
@@ -78,6 +96,53 @@ class ArmArchitectureDetectionTests(unittest.TestCase):
 
     def test_unarmada_host_reported_as_x86(self):
         self.assertFalse(self._detect("x86_64", armada_marker=False))
+
+    def _detect_with_pid1(self, machine: str, pid1_header) -> bool:
+        armada = unittest.mock.patch(
+            "lsfg_vk.base_service.ARMADA_DEVICE_ENV",
+            Mock(is_file=Mock(return_value=False)),
+        )
+        machine_patch = unittest.mock.patch(
+            "lsfg_vk.base_service.platform.machine", return_value=machine
+        )
+        armada.start()
+        machine_patch.start()
+        self.addCleanup(armada.stop)
+        self.addCleanup(machine_patch.stop)
+
+        if pid1_header is None:
+            open_patch = unittest.mock.patch(
+                "lsfg_vk.base_service.Path.open", side_effect=OSError("unreadable")
+            )
+        else:
+
+            def _open(*args, **kwargs):
+                return io.BytesIO(pid1_header)
+
+            open_patch = unittest.mock.patch(
+                "lsfg_vk.base_service.Path.open", _open
+            )
+        open_patch.start()
+        self.addCleanup(open_patch.stop)
+        return BaseService._detect_arm_architecture()
+
+    def test_detects_native_aarch64_from_pid_one_elf_header(self):
+        # Decky under FEX reports x86_64, and the Armada marker is absent on
+        # other ARM handhelds, so PID 1's ELF header is the last resort.
+        self.assertTrue(self._detect_with_pid1("x86_64", _elf_header(EM_AARCH64)))
+
+    def test_pid_one_elf_header_for_x86_64_is_not_arm(self):
+        self.assertFalse(self._detect_with_pid1("x86_64", _elf_header(EM_X86_64)))
+
+    def test_pid_one_elf_class32_is_not_arm(self):
+        elf32_class = 1  # ELFCLASS32
+        self.assertFalse(self._detect_with_pid1("x86_64", _elf_header(EM_AARCH64, elf32_class)))
+
+    def test_short_pid_one_header_is_not_arm(self):
+        self.assertFalse(self._detect_with_pid1("x86_64", _elf_header(EM_AARCH64)[:10]))
+
+    def test_unreadable_pid_one_is_not_arm(self):
+        self.assertFalse(self._detect_with_pid1("x86_64", None))
 
     def test_unreadable_armada_marker_is_not_arm(self):
         with unittest.mock.patch("lsfg_vk.base_service.platform.machine", return_value="x86_64"):
@@ -249,12 +314,17 @@ class ArmInstallationTests(unittest.TestCase):
             path.write_text("installed", encoding="utf-8")
 
     def test_check_installation_true_on_arm_without_x86_payload(self):
+        """The x86 payload is not expected on ARM, so `installed` must hold."""
         self._install_payload(arm=True)
 
         result = self.service.check_installation()
 
         self.assertTrue(result["installed"])
-        self.assertTrue(result["lossless_scaling_installed"])
+        # No DLL exists in this fixture, so the runtime is not ready yet, but
+        # the payload check itself must not be the thing that says "not ready".
+        self.assertFalse(result["lossless_scaling_installed"])
+        self.assertNotIn("x86_64", result["lossless_scaling_status"])
+        self.assertTrue(result["lossless_scaling_status"])
 
     def test_check_installation_false_on_arm_when_layer_is_missing(self):
         self._install_payload(arm=True)
@@ -308,7 +378,7 @@ class ArmInstallationTests(unittest.TestCase):
         self.service._install_arm_layer()
         manifest = self.service.json_file.read_text(encoding="utf-8")
 
-        self.assertIn(ARM_LIB_FILENAME, manifest)
+        self.assertIn(self.service.lib_file.name, manifest)
         self.assertNotIn("liblsfg-vk-layer.x86.so", manifest)
         self.assertFalse(self.service.json_x86_file.exists())
 
@@ -468,6 +538,149 @@ class ArmRuntimeTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.runtime.validate_config_content.assert_not_called()
 
+    def _install_payload(self, service, keep_config: bool = False):
+        """Materialise the payload files, optionally preserving the config.
+
+        config_file_path is part of the required payload, so writing it blank
+        would erase the DLL the caller wants to probe.  keep_config skips it.
+        """
+        for path in service._required_payload():
+            if keep_config and path == service.config_file_path:
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("installed", encoding="utf-8")
+
+    def _write_conf(self, service, dll=""):
+        service.config_dir.mkdir(parents=True, exist_ok=True)
+        service.config_file_path.write_text(
+            'version = 2\n\n[global]\n'
+            f'dll = {json.dumps(dll)}\nallow_fp16 = true\n',
+            encoding="utf-8",
+        )
+
+    # --- C1/C2/C12: ARM falls back to a pure-python DLL check -------------
+
+    def test_arm_check_installation_reports_ready_when_dll_is_present(self):
+        (self.home / "unused-bin").mkdir(exist_ok=True)
+        service, runtime, steam = _build_service(self.home, self.home / "unused-bin")
+        dll = self.home / "steamapps/common/Lossless Scaling/lsfg-vk.dll"
+        dll.parent.mkdir(parents=True, exist_ok=True)
+        dll.write_text("dll", encoding="utf-8")
+        steam.find_lsfg_vk_dll.return_value = str(dll)
+        self._write_conf(service, str(dll))
+        self._install_payload(service)
+        with unittest.mock.patch.object(InstallationService, "is_arm_host", return_value=True):
+            result = service.check_installation()
+
+        self.assertTrue(result["installed"])
+        self.assertTrue(result["lossless_scaling_installed"])
+        self.assertIn("x86-64", result["lossless_scaling_status"])
+        self.assertNotIn(str(self.home), result["lossless_scaling_status"])
+
+    def test_arm_falls_back_to_steam_discovery_when_conf_has_no_dll(self):
+        (self.home / "unused-bin").mkdir(exist_ok=True)
+        service, runtime, steam = _build_service(self.home, self.home / "unused-bin")
+        dll = self.home / "elsewhere/lsfg-vk.dll"
+        dll.parent.mkdir(parents=True, exist_ok=True)
+        dll.write_text("dll", encoding="utf-8")
+        steam.find_lsfg_vk_dll.return_value = str(dll)
+        self._write_conf(service, "")
+        self._install_payload(service)
+        with unittest.mock.patch.object(InstallationService, "is_arm_host", return_value=True):
+            result = service.check_installation()
+
+        self.assertTrue(result["lossless_scaling_installed"])
+        steam.find_lsfg_vk_dll.assert_called()
+
+    # --- C13: actionable message without leaking a path ------------------
+
+    def test_arm_check_installation_reports_missing_dll_without_leaking_path(self):
+        (self.home / "unused-bin").mkdir(exist_ok=True)
+        service, runtime, steam = _build_service(self.home, self.home / "unused-bin")
+        steam.find_lsfg_vk_dll.return_value = None
+        steam.get_branch_status.return_value = {
+            "installed": True,
+            "needs_switch": False,
+            "target_branch": "lsfg-vk",
+            "selected_branch": "lsfg-vk",
+            "message": "",
+        }
+        self._write_conf(service, "")
+        self._install_payload(service)
+        with unittest.mock.patch.object(InstallationService, "is_arm_host", return_value=True):
+            result = service.check_installation()
+
+        self.assertFalse(result["lossless_scaling_installed"])
+        self.assertNotIn(str(self.home), result["lossless_scaling_status"])
+        self.assertNotIn("None", result["lossless_scaling_status"])
+
+    def test_arm_check_installation_names_wrong_branch(self):
+        (self.home / "unused-bin").mkdir(exist_ok=True)
+        service, runtime, steam = _build_service(self.home, self.home / "unused-bin")
+        steam.find_lsfg_vk_dll.return_value = None
+        steam.get_branch_status.return_value = {
+            "installed": True,
+            "needs_switch": True,
+            "target_branch": "lsfg-vk",
+            "selected_branch": "public",
+            "message": "Select lsfg-vk in Lossless Scaling's Steam Properties > Betas",
+        }
+        self._write_conf(service, "")
+        self._install_payload(service)
+        with unittest.mock.patch.object(InstallationService, "is_arm_host", return_value=True):
+            result = service.check_installation()
+
+        self.assertFalse(result["lossless_scaling_installed"])
+        self.assertIn("lsfg-vk", result["lossless_scaling_status"])
+
+    # --- C14: x86-64 keeps the CLI as the primary source ----------------
+
+    def test_arm_ignores_a_stale_configured_dll_on_the_wrong_branch(self):
+        """A DLL left in conf.toml by another branch must not read as ready.
+
+        On x86-64 the CLI catches this.  On ARM the same branch gate has to be
+        applied by discovery, or a stale DLL would look perfectly healthy.
+        """
+        (self.home / "unused-bin").mkdir(exist_ok=True)
+        service, runtime, steam = _build_service(self.home, self.home / "unused-bin")
+        stale_dll = self.home / "steamapps/common/Lossless Scaling/lsfg-vk.dll"
+        stale_dll.parent.mkdir(parents=True, exist_ok=True)
+        stale_dll.write_text("dll", encoding="utf-8")
+        self._write_conf(service, str(stale_dll))
+        self._install_payload(service, keep_config=True)
+        # Discovery is branch-gated, so it refuses the stale DLL.
+        steam.find_lsfg_vk_dll.return_value = None
+        steam.get_branch_status.return_value = {
+            "installed": True,
+            "needs_switch": True,
+            "target_branch": "lsfg-vk",
+            "selected_branch": "public",
+            "message": "Select lsfg-vk in Lossless Scaling's Steam Properties > Betas",
+        }
+
+        with unittest.mock.patch.object(InstallationService, "is_arm_host", return_value=True):
+            result = service.check_installation()
+
+        self.assertFalse(result["lossless_scaling_installed"])
+        self.assertIn("lsfg-vk", result["lossless_scaling_status"])
+
+    def test_x86_check_installation_still_uses_the_cli(self):
+        (self.home / "unused-bin").mkdir(exist_ok=True)
+        service, runtime, steam = _build_service(self.home, self.home / "unused-bin")
+        runtime.cli_unusable.return_value = False
+        runtime.check_lossless_scaling.return_value = {
+            "installed": True,
+            "status": "Lossless Scaling detected by lsfg-vk",
+        }
+        self._write_conf(service, "")
+        self._install_payload(service)
+        with unittest.mock.patch.object(InstallationService, "is_arm_host", return_value=False):
+            result = service.check_installation()
+
+        runtime.check_lossless_scaling.assert_called_once()
+        self.assertTrue(result["lossless_scaling_installed"])
+        steam.find_lsfg_vk_dll.assert_not_called()
+
     def test_lossless_scaling_status_is_actionable_when_cli_cannot_run(self):
         runtime = RuntimeService(logger=Mock())
         runtime.user_home = self.home
@@ -482,22 +695,6 @@ class ArmRuntimeTests(unittest.TestCase):
         self.assertFalse(status["installed"])
         self.assertNotIn(str(self.home), status["status"])
         self.assertIn("x86-64", status["status"])
-
-    def test_check_installation_reports_unusable_cli_status(self):
-        (self.home / "unused-bin").mkdir(exist_ok=True)
-        service, runtime, steam = _build_service(self.home, self.home / "unused-bin")
-        runtime.check_lossless_scaling.return_value = {
-            "installed": False,
-            "status": RuntimeService.CLI_UNSUPPORTED_STATUS,
-        }
-        with unittest.mock.patch.object(InstallationService, "is_arm_host", return_value=True):
-            for path in service._required_payload():
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("installed", encoding="utf-8")
-            result = service.check_installation()
-
-        self.assertTrue(result["installed"])
-        self.assertIn("x86-64", result["lossless_scaling_status"])
 
 
 if __name__ == "__main__":

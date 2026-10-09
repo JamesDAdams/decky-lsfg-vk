@@ -12,7 +12,7 @@ from .config_schema import ConfigurationManager, ProfileData, UnsupportedConfigu
 from .constants import (
     ARCHIVE_FILENAME,
     ARM_ARCHIVE_FILENAME,
-    ARM_LIB_FILENAME,
+    ARM_LIB_SOURCE_FILENAME,
     ARM_MANIFEST_FILENAME,
     BIN_DIR,
     CLI_FILENAME,
@@ -94,14 +94,16 @@ class InstallationService(BaseService):
             }
             missing = [
                 name
-                for name in (ARM_LIB_FILENAME, ARM_MANIFEST_FILENAME)
+                for name in (ARM_LIB_SOURCE_FILENAME, ARM_MANIFEST_FILENAME)
                 if name not in members
             ]
             if missing:
                 raise OSError(
                     f"{ARM_ARCHIVE_FILENAME} is missing required files: " + ", ".join(missing)
                 )
-            self._extract_member(archive, members[ARM_LIB_FILENAME], self.lib_file, 0o644)
+            self._extract_member(
+                archive, members[ARM_LIB_SOURCE_FILENAME], self.lib_file, 0o644
+            )
             self._extract_member(archive, members[ARM_MANIFEST_FILENAME], self.json_file, 0o644)
         self._align_manifest_library_path()
         self.log.info(f"Installed native AArch64 layer at {self.lib_file}")
@@ -332,7 +334,10 @@ class InstallationService(BaseService):
             installed = all(path.is_file() for path in self._required_payload())
             if installed:
                 self._repair_dll_path()
-            lossless_scaling = self.runtime_service.check_lossless_scaling()
+            if self.runtime_service.cli_unusable():
+                lossless_scaling = self._check_lossless_scaling_without_cli()
+            else:
+                lossless_scaling = self.runtime_service.check_lossless_scaling()
             return {
                 "installed": installed,
                 "lossless_scaling_installed": bool(lossless_scaling["installed"]),
@@ -346,6 +351,52 @@ class InstallationService(BaseService):
                 "lossless_scaling_status": str(error),
                 "error": str(error),
             }
+
+    def _lossless_scaling_unavailable_reason(self) -> Dict[str, str]:
+        """Explain why Lossless Scaling is not usable, without leaking paths.
+
+        The Steam branch is what lsfg-vk itself gates the DLL on, so it is
+        reported ahead of a plain "missing DLL" so the user knows what to fix.
+        """
+        try:
+            branch = self.steam_service.get_branch_status()
+            if not isinstance(branch, dict):
+                branch = {}
+        except Exception:
+            branch = {}
+        if branch.get("needs_switch") is True:
+            message = str(branch.get("message") or "").strip()
+            target = str(branch.get("target_branch") or "lsfg-vk")
+            return {
+                "installed": False,
+                "status": message or f"Select the {target} branch of Lossless Scaling in Steam",
+            }
+        return {
+            "installed": False,
+            "status": self.runtime_service.DLL_NOT_FOUND_STATUS,
+        }
+
+    def _check_lossless_scaling_without_cli(self) -> Dict[str, str]:
+        """Report Lossless Scaling state using only filesystem probes.
+
+        lsfg-vk-cli is an x86-64 binary, so an AArch64 host cannot run it.  The
+        DLL is the sole real prerequisite for the layer, and the Steam branch
+        gating around it is already answered by SteamService, so the CLI is not
+        needed to tell the user whether the runtime is ready.
+
+        ``steam_service.find_lsfg_vk_dll()`` is the single discovery helper and
+        the only one that applies the Steam branch gate, so its answer is
+        final: a DLL left in conf.toml by another branch must not read as
+        ready, which is exactly what the CLI would catch on x86-64.  That is
+        why the configured path is never trusted on its own here.
+        """
+        discovered = self.steam_service.find_lsfg_vk_dll() or ""
+        if discovered and Path(discovered).is_file():
+            return {
+                "installed": True,
+                "status": RuntimeService.CLI_UNSUPPORTED_STATUS_DETECTED,
+            }
+        return self._lossless_scaling_unavailable_reason()
 
     def uninstall(self) -> UninstallationResponse:
         try:

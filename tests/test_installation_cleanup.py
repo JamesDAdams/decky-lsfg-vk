@@ -58,6 +58,46 @@ class InstallationCleanupTests(unittest.TestCase):
             self.assertTrue(unrelated.exists())
             self.assertTrue(service.local_bin_dir.exists())
 
+    def test_uninstall_removes_stale_v1_layer_files(self):
+        """A stale lsfg-vk v1 layer must be removed on uninstall.
+
+        These predate the v2 runtime and would otherwise keep loading a
+        second, conflicting Vulkan layer on devices upgrading from v0.12.x.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "home" / "deck"
+            service = InstallationService.__new__(InstallationService)
+            BaseService.__init__(service)
+            service.log = Mock()
+            service.user_home = home
+            service.local_bin_dir = home / ".local/bin"
+            service.local_lib_dir = home / ".local/lib"
+            service.local_share_dir = home / ".local/share/vulkan/implicit_layer.d"
+            service.config_dir = home / ".config/lsfg-vk"
+            service.config_file_path = service.config_dir / "conf.toml"
+            service.legacy_script_path = home / "lsfg"
+            service.lib_file = service.local_lib_dir / "liblsfg-vk-layer.so"
+            service.lib_x86_file = service.local_lib_dir / "liblsfg-vk-layer.x86.so"
+            service.json_file = service.local_share_dir / "VkLayer_LSFGVK_frame_generation.json"
+            service.json_x86_file = (
+                service.local_share_dir / "VkLayer_LSFGVK_frame_generation.x86.json"
+            )
+            service.cli_file = service.local_bin_dir / "lsfg-vk-cli"
+            service.legacy_lib_file = service.local_lib_dir / "liblsfg-vk.so"
+            service.legacy_json_file = (
+                service.local_share_dir / "VkLayer_LS_frame_generation.json"
+            )
+
+            for path in (service.legacy_lib_file, service.legacy_json_file):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("stale v1", encoding="utf-8")
+
+            result = service.uninstall()
+
+            self.assertTrue(result["success"])
+            self.assertFalse(service.legacy_lib_file.exists())
+            self.assertFalse(service.legacy_json_file.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

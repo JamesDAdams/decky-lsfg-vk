@@ -22,12 +22,20 @@ STEAM_LOSSLESS_SCALING_APP_ID = "993090"
 STEAM_LOSSLESS_SCALING_BRANCH = "lsfg-vk"
 
 ARM_ARCHIVE_FILENAME = "lsfg-vk-layer-aarch64.tar.xz"
-ARM_LIB_FILENAME = "liblsfg-vk-layer.so"
+ARM_LIB_SOURCE_FILENAME = "liblsfg-vk-layer.so"
 ARM_MANIFEST_FILENAME = "VkLayer_LSFGVK_frame_generation.json"
 
 ARMADA_DEVICE_ENV = Path("/usr/libexec/armada/device-env")
 ARMADA_GAME_LAUNCH = Path("/usr/libexec/armada/armada-game-launch")
 
+ELF_MACHINE_AARCH64 = 183
+
+# lsfg-vk v1 layer files.  These predate this change set (they arrived with
+# the v2 runtime migration) and stay wired into install/uninstall so that a
+# user upgrading from v0.12.x does not keep a stale v1 Vulkan layer, which
+# would load alongside the v2 layer and break frame generation.  They are not
+# the ARM payload: the ARM names above are distinct and carry no "legacy"
+# meaning.  Covered by tests/test_installation_cleanup.py.
 LEGACY_LIB_FILENAME = "liblsfg-vk.so"
 LEGACY_JSON_FILENAME = "VkLayer_LS_frame_generation.json"
 

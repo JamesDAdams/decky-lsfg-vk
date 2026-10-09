@@ -11,6 +11,7 @@ from .constants import (
     ARMADA_DEVICE_ENV,
     CONFIG_DIR,
     CONFIG_FILENAME,
+    ELF_MACHINE_AARCH64,
     LOCAL_BIN,
     LOCAL_LIB,
     SCRIPT_NAME,
@@ -38,15 +39,34 @@ class BaseService:
 
         Decky's python backend runs through FEX on Armada devices, so
         ``platform.machine()`` reports the emulated x86_64 instead of the
-        underlying architecture.  The Armada marker recovers the real host on
-        those devices; nothing else needs a probe.
+        underlying architecture.  Two further probes recover the real host so
+        that the AArch64 payload is selected on those devices.
         """
         if platform.machine().lower() in ("aarch64", "arm64"):
             return True
+
+        # Armada ships this native helper only on its AArch64 image, and it
+        # stays reachable through Decky's FEX rootfs.
         try:
-            return bool(ARMADA_DEVICE_ENV.is_file())
+            if ARMADA_DEVICE_ENV.is_file():
+                return True
         except OSError:
-            return False
+            pass
+
+        # Fall back to the native PID 1 ELF header, which FEX does not
+        # rewrite.  e_machine 183 is EM_AARCH64.
+        try:
+            with Path("/proc/1/exe").open("rb") as host_executable:
+                elf_header = host_executable.read(20)
+            if len(elf_header) == 20 and elf_header[:4] == b"\x7fELF" and elf_header[4] == 2:
+                byte_order = "little" if elf_header[5] == 1 else "big"
+                machine = int.from_bytes(elf_header[18:20], byte_order)
+                if machine == ELF_MACHINE_AARCH64:
+                    return True
+        except OSError:
+            pass
+
+        return False
 
     def is_arm_host(self) -> bool:
         """Report whether this host needs the AArch64 layer payload."""
