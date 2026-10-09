@@ -7,7 +7,7 @@ import threading
 from typing import Any, Dict, Optional, Tuple
 
 from .base_service import BaseService
-from .constants import WRAPPER_FILENAME
+from .constants import ARMADA_DEVICE_ENV, ARMADA_GAME_LAUNCH, WRAPPER_FILENAME
 
 
 class WrapperService(BaseService):
@@ -220,10 +220,39 @@ class WrapperService(BaseService):
             lines.append("    ;;")
         lines.extend([
             "esac",
-            'exec "$@"',
+            *self._generate_game_launch_lines(),
             "",
         ])
         return "\n".join(lines)
+
+    # Wrappers left behind in the legacy format end on a bare 'exec "$@"', so
+    # they miss the Armada hand-off above.  repair() rewrites them from this
+    # dispatcher on the next plugin load, so the migration is automatic.
+
+    @staticmethod
+    def _generate_game_launch_lines() -> list[str]:
+        """Generate a portable exec block with Armada's host wrapper.
+
+        Armada rewrites launch commands to route through its own
+        ``armada-game-launch`` helper.  Absent that hand-off, the layer's
+        environment is lost and games stop picking up the generated
+        configuration.  The guard only fires where Armada's native marker and
+        wrapper are both present, so other systems keep the plain exec.
+        """
+        device_env = ARMADA_DEVICE_ENV.as_posix()
+        game_launch = ARMADA_GAME_LAUNCH.as_posix()
+        return [
+            f'armada_game_launch="{game_launch}"',
+            'for argument in "$@"; do',
+            '    if [ "$argument" = "$armada_game_launch" ]; then',
+            '        exec "$@"',
+            "    fi",
+            "done",
+            f'if [ -f "{device_env}" ] && [ -x "$armada_game_launch" ]; then',
+            '    exec "$armada_game_launch" "$@"',
+            "fi",
+            'exec "$@"',
+        ]
 
     def _write_document(self, document: Dict[str, Any]) -> None:
         self._write_file(

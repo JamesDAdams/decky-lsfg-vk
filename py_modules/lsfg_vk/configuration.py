@@ -39,7 +39,12 @@ class ConfigurationService(BaseService):
 
     def _save_profile_data(self, data: ProfileData) -> None:
         content = ConfigurationManager.generate_toml_content_multi_profile(data)
-        self.runtime_service.validate_config_content(content)
+        if self.runtime_service.cli_unusable():
+            self.log.warning(
+                f"Skipping lsfg-vk CLI validation because {self.runtime_service.CLI_UNSUPPORTED_STATUS}"
+            )
+        else:
+            self.runtime_service.validate_config_content(content)
         self._write_file(self.config_file_path, content, 0o644)
 
     @staticmethod

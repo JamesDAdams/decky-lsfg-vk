@@ -13,6 +13,10 @@ class RuntimeService(BaseService):
     MAX_OUTPUT_LENGTH = 12_000
     DLL_MISSING_MARKER = "! The DLL file does not exist:"
     DLL_NONE_MARKER = "DLL override: (none)"
+    CLI_UNSUPPORTED_STATUS = (
+        "lsfg-vk-cli is only built for x86-64, so on-device validation is "
+        "unavailable on this host"
+    )
 
     def __init__(self, logger=None):
         super().__init__(logger)
@@ -40,6 +44,8 @@ class RuntimeService(BaseService):
         return output if len(output) <= cls.MAX_OUTPUT_LENGTH else output[: cls.MAX_OUTPUT_LENGTH]
 
     def _run(self, arguments: Sequence[str]) -> tuple[int, str]:
+        if self.cli_unusable():
+            raise RuntimeError(self.CLI_UNSUPPORTED_STATUS)
         if not self.cli_path.is_file() or not os.access(self.cli_path, os.X_OK):
             raise FileNotFoundError(f"{CLI_FILENAME} is not installed at {self.cli_path}")
         result = subprocess.run(
@@ -52,6 +58,16 @@ class RuntimeService(BaseService):
             check=False,
         )
         return result.returncode, self._output(result.stdout, result.stderr)
+
+    def cli_unusable(self) -> bool:
+        """Report whether lsfg-vk-cli cannot run on this host at all.
+
+        lsfg-vk ships the CLI as an x86-64 binary only.  On an AArch64 host the
+        kernel refuses to exec it, so every CLI-backed operation would fail
+        with a raw exec-format error instead of an actionable message.  Callers
+        need one place to ask, so this is the single source of truth.
+        """
+        return self.is_arm_host()
 
     def validate_config_content(self, content: str) -> None:
         self.config_dir.mkdir(parents=True, exist_ok=True)
@@ -94,6 +110,8 @@ class RuntimeService(BaseService):
                 ("validate", "--config", str(self.config_file_path), "--print")
             )
         except Exception as error:
+            if self.cli_unusable():
+                return {"installed": False, "status": self.CLI_UNSUPPORTED_STATUS}
             return {"installed": False, "status": str(error)}
 
         if returncode != 0:

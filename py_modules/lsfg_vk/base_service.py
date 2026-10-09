@@ -1,11 +1,21 @@
 import os
+import platform
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional, TypeVar
 
 import decky
 
-from .constants import CONFIG_DIR, CONFIG_FILENAME, LOCAL_BIN, LOCAL_LIB, SCRIPT_NAME, VULKAN_LAYER_DIR
+from .constants import (
+    ARMADA_DEVICE_ENV,
+    CONFIG_DIR,
+    CONFIG_FILENAME,
+    LOCAL_BIN,
+    LOCAL_LIB,
+    SCRIPT_NAME,
+    VULKAN_LAYER_DIR,
+)
 
 ResponseType = TypeVar("ResponseType", bound=Dict[str, Any])
 
@@ -21,6 +31,30 @@ class BaseService:
         self.legacy_script_path = self.user_home / SCRIPT_NAME
         self.config_dir = self.user_home / CONFIG_DIR
         self.config_file_path = self.config_dir / CONFIG_FILENAME
+
+    @staticmethod
+    def _detect_arm_architecture() -> bool:
+        """Check whether the native host is AArch64.
+
+        Decky's python backend runs through FEX on Armada devices, so
+        ``platform.machine()`` reports the emulated x86_64 instead of the
+        underlying architecture.  The Armada marker recovers the real host on
+        those devices; nothing else needs a probe.
+        """
+        if platform.machine().lower() in ("aarch64", "arm64"):
+            return True
+        try:
+            return bool(ARMADA_DEVICE_ENV.is_file())
+        except OSError:
+            return False
+
+    def is_arm_host(self) -> bool:
+        """Report whether this host needs the AArch64 layer payload."""
+        cached = getattr(self, "_arm_host", None)
+        if cached is None:
+            cached = _host_is_aarch64()
+            self._arm_host = cached
+        return cached
 
     def _ensure_directories(self) -> None:
         for directory in (self.local_bin_dir, self.local_lib_dir, self.local_share_dir, self.config_dir):
@@ -64,3 +98,9 @@ class BaseService:
         response = {"success": False, "message": message, "error": error}
         response.update(kwargs)
         return response
+
+
+@lru_cache(maxsize=1)
+def _host_is_aarch64() -> bool:
+    """Resolve the native host architecture once per process."""
+    return BaseService._detect_arm_architecture()

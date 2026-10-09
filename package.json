@@ -44,7 +44,8 @@
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "4.22.5",
-    "@rollup/rollup-linux-x64-musl": "4.22.5"
+    "@rollup/rollup-linux-x64-musl": "4.22.5",
+    "@rollup/rollup-linux-arm64-gnu": "4.22.5"
   },
   "remote_binary_bundling" : true,
   "remote_binary": [
@@ -52,6 +53,11 @@
       "name": "lsfg-vk-2.0.0.tar.xz",
       "url": "https://builds.lsfg-vk.dev/lsfg-vk-2.0.0.tar.xz",
       "sha256hash": "08bdbdf373a111022df87dac7aa87e3b564bb841f961552e3ca85fea12b5aa74"
+    },
+    {
+      "name": "lsfg-vk-layer-aarch64.tar.xz",
+      "url": "https://github.com/xXJSONDeruloXx/lsfg-vk-arm64/releases/download/v2.0.0-decky.3-arm64/lsfg-vk-layer-aarch64.tar.xz",
+      "sha256hash": "b7999d7eb58ecf3b0f59de6fea9d053c04d2cfdf1eef46f1148fdaff3e9be25c"
     }
   ],
   "pnpm": {
