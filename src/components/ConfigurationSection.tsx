@@ -1,10 +1,18 @@
-import { PanelSectionRow, SliderField, ToggleField } from "@decky/ui";
+import { ButtonItem, PanelSectionRow, SliderField, TextField, ToggleField } from "@decky/ui";
 import { useState } from "react";
 import { ConfigurationData, FLOW_SCALE, PERFORMANCE_MODE, OVERRIDE_PRESENT_MODE, PRESERVE_SWAPCHAIN_IMAGE_COUNT } from "../config/configSchema";
 
 interface ConfigurationSectionProps {
   config: ConfigurationData;
   onConfigChange: (fieldName: keyof ConfigurationData, value: boolean | number | string | string[]) => Promise<void>;
+}
+
+function parseNames(raw: string): string[] {
+  // Accept one per line, or comma separated, and drop blank entries.
+  return raw
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function ExecutableNamesField({
@@ -34,27 +42,18 @@ function ExecutableNamesField({
           Steam App ID. Add the game&apos;s executable, e.g.{" "}
           <code>Game.exe</code>. One per line.
         </div>
-        <textarea
+        <TextField
           value={value}
-          placeholder={names.length ? names.join("\n") : "Game.exe"}
+          label="Executable name"
+          description="e.g. ASAMU-Win32-Shipping.exe"
           onChange={(event) => setValue(event.target.value)}
-          onBlur={() => {
-            const parsed = value
-              .split(/[\n,]/)
-              .map((entry) => entry.trim())
-              .filter(Boolean);
-            commit(parsed);
-            setValue("");
-          }}
-          rows={2}
-          style={{
-            width: "100%",
-            marginTop: 6,
-            boxSizing: "border-box",
-            padding: 6,
-            resize: "vertical",
-          }}
         />
+        <ButtonItem
+          layout="below"
+          onClick={() => commit(parseNames(value))}
+        >
+          Save executable name
+        </ButtonItem>
         {names.length > 0 && (
           <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
             Currently: {names.join(", ")}
