@@ -1,7 +1,7 @@
 import { ButtonItem, Field, PanelSection, PanelSectionRow, Spinner } from "@decky/ui";
 import { useEffect, useState } from "react";
 import { RiArrowDownSFill, RiArrowUpSFill } from "react-icons/ri";
-import { getDebugFileContents, type DebugFileContent, type DebugFileContentsResult } from "../api/lsfgApi";
+import { getDebugFileContents, writeDebugReport, type DebugFileContent, type DebugFileContentsResult } from "../api/lsfgApi";
 import t from "../i18n/i18n";
 
 function usePersistentCollapsed(key: string) {
@@ -69,6 +69,35 @@ function DebugFileSection({ file }: { file: DebugFileContent }) {
   );
 }
 
+async function exportDebugReport() {
+  try {
+    const response = await writeDebugReport();
+    if (!response.success || !response.report) {
+      console.error("lsfg-vk debug export failed", response.error);
+      return;
+    }
+    // The clipboard is the only channel a Decky frontend can rely on for
+    // getting text off the device, so the report is always copied.  The file
+    // stays on disk as a fallback for anyone browsing to it.
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = response.report;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    } catch {
+      // Copying is best effort; the report file is still written.
+    }
+    console.log("lsfg-vk debug report written to", response.path, "\n" + response.report);
+  } catch (error) {
+    console.error("lsfg-vk debug export failed", error);
+  }
+}
+
 export function ConfigFileTab() {
   const [result, setResult] = useState<DebugFileContentsResult | null>(null);
 
@@ -109,6 +138,17 @@ export function ConfigFileTab() {
         `}
       </style>
       <PanelSection title={t("NERD_CONFIG_FILE", "Config / Debug")}>
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            bottomSeparator="standard"
+            onClick={() => {
+              void exportDebugReport();
+            }}
+          >
+            Export debug report
+          </ButtonItem>
+        </PanelSectionRow>
         {result.error && (
           <PanelSectionRow>
             <Field label="Error" description={result.error} />

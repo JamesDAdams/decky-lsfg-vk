@@ -2,6 +2,7 @@ import asyncio
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import Mock
 
 
@@ -93,6 +94,47 @@ class PluginMigrationTests(unittest.TestCase):
             plugin.configuration_service.reset_all_flatpak_configs.assert_not_called()
             plugin.wrapper_service.purge.assert_not_called()
             plugin.installation_service.cleanup_on_uninstall.assert_not_called()
+        finally:
+            self._restore(previous_decky, previous_tomllib, previous_plugin)
+
+    def test_write_debug_report_includes_diagnostics_and_files(self):
+        Plugin, decky, previous_decky, previous_tomllib, previous_plugin = self._load_plugin()
+        try:
+            plugin = Plugin.__new__(Plugin)
+            plugin.installation_service = Mock()
+            plugin.configuration_service = Mock()
+            plugin.wrapper_service = Mock()
+            plugin.flatpak_service = Mock()
+            plugin.installation_service.is_arm_host.return_value = False
+            plugin.installation_service.lib_file = None
+            plugin.installation_service.lib_x86_file = None
+            plugin.installation_service.json_file = None
+            plugin.installation_service.json_x86_file = None
+            plugin.installation_service.cli_file = None
+            plugin.runtime_service = Mock()
+            plugin.runtime_service.cli_unusable.return_value = False
+            plugin.runtime_service.check_lossless_scaling.return_value = {
+                "installed": True,
+                "status": "Lossless Scaling detected by lsfg-vk",
+            }
+            plugin.steam_service = Mock()
+            plugin.steam_service.get_branch_status.return_value = {
+                "installed": True,
+                "needs_switch": False,
+            }
+            plugin.configuration_service.config_file_path = Path("/nonexistent/conf.toml")
+            plugin.wrapper_service.wrapper_path = Path("/nonexistent/.lsfg")
+            plugin.wrapper_service.sidecar_path = Path("/nonexistent/workarounds.json")
+            plugin.flatpak_service.ownership_path = None
+
+            result = asyncio.run(plugin.write_debug_report())
+
+            self.assertTrue(result["success"])
+            self.assertTrue(result["report"])
+            # The facts that explain an inert multiplier must be in the report.
+            for marker in ("host_is_arm", "cli_usable", "wrapper_exports_config",
+                           "lossless_scaling", "branch_status", "plugin_version"):
+                self.assertIn(marker, result["report"])
         finally:
             self._restore(previous_decky, previous_tomllib, previous_plugin)
 

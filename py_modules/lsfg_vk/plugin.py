@@ -1,4 +1,6 @@
+import json
 import os
+from pathlib import Path
 from typing import Any, Dict
 
 import decky
@@ -155,6 +157,115 @@ class Plugin:
             "message": "Debug file contents retrieved",
             "error": None,
             "files": contents,
+            "diagnostics": self._collect_diagnostics(),
+        }
+
+    def _collect_diagnostics(self) -> Dict[str, Any]:
+        """Gather the runtime state that explains why frame generation is inert.
+
+        Most reported failures come from the layer never being handed a
+        usable configuration at launch time, which no single file reveals, so
+        the export carries the whole picture in one place.
+        """
+        diagnostics: Dict[str, Any] = {}
+        try:
+            diagnostics["host_is_arm"] = self.installation_service.is_arm_host()
+        except Exception as error:
+            diagnostics["host_is_arm"] = f"unknown ({error})"
+        try:
+            diagnostics["cli_usable"] = not self.runtime_service.cli_unusable()
+        except Exception as error:
+            diagnostics["cli_usable"] = f"unknown ({error})"
+        try:
+            diagnostics["lossless_scaling"] = self.runtime_service.check_lossless_scaling()
+        except Exception as error:
+            diagnostics["lossless_scaling"] = {"installed": False, "status": str(error)}
+        try:
+            diagnostics["branch_status"] = self.steam_service.get_branch_status()
+        except Exception as error:
+            diagnostics["branch_status"] = {"status": str(error)}
+
+        payload = {}
+        for name, path in (
+            ("config", self.configuration_service.config_file_path),
+            ("wrapper", self.wrapper_service.wrapper_path),
+            ("layer", self.installation_service.lib_file),
+            ("x86_layer", self.installation_service.lib_x86_file),
+            ("manifest", self.installation_service.json_file),
+            ("x86_manifest", self.installation_service.json_x86_file),
+            ("cli", self.installation_service.cli_file),
+        ):
+            try:
+                payload[name] = str(path) if path else None
+            except Exception:
+                payload[name] = None
+        diagnostics["payload_paths"] = payload
+
+        # Whether the launch wrapper actually exports the configuration is the
+        # single most common cause of a silently inert multiplier, so the
+        # rendered script is reported alongside its mode.
+        try:
+            wrapper_path = self.wrapper_service.wrapper_path
+            if wrapper_path.is_file() and not wrapper_path.is_symlink():
+                diagnostics["wrapper_exports_config"] = (
+                    "LSFGVK_CONFIG" in wrapper_path.read_text(encoding="utf-8")
+                )
+            else:
+                diagnostics["wrapper_exports_config"] = "wrapper is missing"
+        except Exception as error:
+            diagnostics["wrapper_exports_config"] = f"unknown ({error})"
+
+        try:
+            diagnostics["plugin_version"] = self._plugin_version()
+        except Exception:
+            diagnostics["plugin_version"] = "unknown"
+        return diagnostics
+
+    @staticmethod
+    def _plugin_version() -> str:
+        import json
+
+        manifest = Path(__file__).resolve().parent.parent.parent / "package.json"
+        return str(json.loads(manifest.read_text(encoding="utf-8")).get("version", "unknown"))
+
+    async def write_debug_report(self) -> Dict[str, Any]:
+        """Write a debug report the user can hand to a maintainer.
+
+        Returns the path and the report text so the frontend can either copy
+        it or point the user at the file.
+        """
+        payload = await self.get_debug_file_contents()
+        import tempfile
+
+        target = Path(tempfile.gettempdir()) / "lsfg-vk-debug-report.txt"
+        lines = ["lsfg-vk Decky plugin debug report", "=" * 40, ""]
+
+        for key, value in (payload.get("diagnostics") or {}).items():
+            lines.append(f"[{key}]")
+            if isinstance(value, (dict, list)):
+                lines.append(json.dumps(value, indent=2, sort_keys=True, default=str))
+            else:
+                lines.append(str(value))
+            lines.append("")
+
+        for item in payload.get("files") or []:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"--- {item.get('label')} ({item.get('id')}) ---")
+            lines.append(f"path: {item.get('path')}")
+            if item.get("exists") and item.get("content"):
+                lines.append(item["content"])
+            else:
+                lines.append(f"unavailable: {item.get('error') or 'not present'}")
+            lines.append("")
+
+        report = "\n".join(line.rstrip() for line in lines) + "\n"
+        target.write_text(report, encoding="utf-8")
+        return {
+            "success": True,
+            "error": None,
+            "path": str(target),
+            "report": report,
         }
 
     async def get_lossless_scaling_branch_status(self):

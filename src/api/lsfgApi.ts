@@ -112,8 +112,19 @@ export interface DebugFileContent {
   error?: string | null;
 }
 
+export interface DebugDiagnostics {
+  host_is_arm?: boolean | string;
+  cli_usable?: boolean | string;
+  lossless_scaling?: { installed?: boolean; status?: string };
+  branch_status?: Record<string, unknown>;
+  payload_paths?: Record<string, string | null>;
+  wrapper_exports_config?: boolean | string;
+  plugin_version?: string;
+}
+
 export interface DebugFileContentsResult extends ApiResult {
   files?: DebugFileContent[];
+  diagnostics?: DebugDiagnostics;
 }
 
 export interface FlatpakApp {
@@ -178,3 +189,9 @@ export const setWorkaroundState = callable<[
 export const removeWorkaroundState = callable<[string], WorkaroundStateResult>("remove_workaround_state");
 export const getWorkaroundApps = callable<[], WorkaroundAppsResult>("get_workaround_apps");
 export const getDebugFileContents = callable<[], DebugFileContentsResult>("get_debug_file_contents");
+export const writeDebugReport = callable<[], DebugReportResult>("write_debug_report");
+
+export interface DebugReportResult extends ApiResult {
+  path?: string;
+  report?: string;
+}
