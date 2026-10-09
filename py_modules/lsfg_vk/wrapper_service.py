@@ -150,13 +150,10 @@ class WrapperService(BaseService):
         return shlex.quote(value)
 
     def _state_lines(self, state: Dict[str, Any]) -> list[str]:
+        # Only per-game state is unset here: the configuration path is
+        # exported unconditionally by _render_wrapper() so that games with no
+        # workaround still load the profile that enables frame generation.
         lines = ["    unset " + " ".join(self.MANAGED_ENV_KEYS)]
-        lines.extend([
-            '    SteamAppId="$appid"',
-            "    export SteamAppId",
-            f"    LSFGVK_CONFIG={self._shell(str(self.config_file_path))}",
-            "    export LSFGVK_CONFIG",
-        ])
         if state["disableGamescopeWsi"]:
             lines.extend(["    ENABLE_GAMESCOPE_WSI=0", "    export ENABLE_GAMESCOPE_WSI"])
         if state["disableHdr"]:
@@ -212,6 +209,21 @@ class WrapperService(BaseService):
             '    *) appid="${STEAM_COMPAT_APP_ID}" ;;',
             "  esac",
             "fi",
+            # The Vulkan layer reads its configuration exclusively through
+            # LSFGVK_CONFIG, so it must be exported even when no per-game
+            # workaround matched below.  Otherwise a plain frame-generation
+            # profile would run without any configuration and silently do
+            # nothing.  The layer still decides which profile applies through
+            # `active_in`, so pointing every launch at the file is safe.
+            f"    LSFGVK_CONFIG={self._shell(str(self.config_file_path))}",
+            "    export LSFGVK_CONFIG",
+            # Only publish an App ID that actually resolved: non-Steam
+            # shortcuts have no SteamAppId at all, and a set-but-empty value
+            # reads differently from an unset one to launches that probe it.
+            '    if [ -n "$appid" ]; then',
+            '        SteamAppId="$appid"',
+            "        export SteamAppId",
+            "    fi",
             'case "$appid" in',
         ]
         for appid in sorted(document["apps"], key=lambda value: int(value)):

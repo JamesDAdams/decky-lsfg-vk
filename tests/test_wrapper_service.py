@@ -142,6 +142,120 @@ class WrapperServiceTests(unittest.TestCase):
         self.assertEqual(passthrough_values["KEEP"], "yes")
         self.assertEqual(passthrough_values["DXVK_HDR"], "1")
 
+    def _write_empty_dispatcher(self):
+        """Write the wrapper for a game that has no workaround entry."""
+        self.service.config_dir.mkdir(parents=True, exist_ok=True)
+        self.service.sidecar_path.write_text(
+            '{"version": 2, "apps": {}}', encoding="utf-8"
+        )
+        self.service.wrapper_path.write_text(
+            self.service._render_wrapper({"version": 2, "apps": {}})
+        )
+        self.service.wrapper_path.chmod(0o755)
+        self.assertEqual(
+            subprocess.run(["/bin/sh", "-n", str(self.service.wrapper_path)]).returncode,
+            0,
+        )
+
+    def _run_wrapper(self, appid, *args, env=None):
+        process_env = {"PATH": "/usr/bin:/bin"}
+        if appid is not None:
+            process_env["SteamAppId"] = str(appid)
+        if env:
+            process_env.update(env)
+        return subprocess.run(["/usr/bin/env", "-i", *(
+            [f"{key}={value}" for key, value in process_env.items()]
+        ), str(self.service.wrapper_path), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    @staticmethod
+    def _as_values(result):
+        return dict(
+            line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+        )
+
+    def test_config_is_exported_even_without_a_workaround_entry(self):
+        """A plain frame-generation profile must still reach the game.
+
+        The Vulkan layer reads its configuration exclusively through
+        LSFGVK_CONFIG, so a game that has no workaround entry used to run
+        without any configuration and silently ignored the multiplier.
+        """
+        self._write_empty_dispatcher()
+
+        values = self._as_values(self._run_wrapper("1091500", "/usr/bin/env"))
+
+        self.assertIn("LSFGVK_CONFIG", values)
+        self.assertEqual(values["LSFGVK_CONFIG"], str(self.service.config_file_path))
+        self.assertEqual(values["SteamAppId"], "1091500")
+
+    def test_config_reaches_a_game_that_has_a_workaround_entry(self):
+        """Matched and unmatched games both need the configuration."""
+        self.service.set("1091500", self._state(dxvkFrameRate=30))
+
+        values = self._as_values(self._run_wrapper("1091500", "/usr/bin/env"))
+
+        self.assertIn("LSFGVK_CONFIG", values)
+        self.assertEqual(values["LSFGVK_CONFIG"], str(self.service.config_file_path))
+        # Per-game workarounds still apply on the matched path.
+        self.assertIn("dxvk.maxFrameRate = 30", values["DXVK_CONFIG"])
+        # MANAGED_ENV_KEYS stay per-game, so they are not exported globally.
+        self.assertEqual(values["ENABLE_GAMESCOPE_WSI"], "0")
+        self.assertEqual(values["DXVK_HDR"], "0")
+
+    def test_unmanaged_env_survives_for_a_game_without_workarounds(self):
+        self._write_empty_dispatcher()
+
+        values = self._as_values(
+            self._run_wrapper("999", "/usr/bin/env", env={"KEEP": "yes"})
+        )
+
+        self.assertEqual(values["KEEP"], "yes")
+        self.assertIn("LSFGVK_CONFIG", values)
+
+    def test_removing_the_last_workaround_keeps_the_config_exported(self):
+        """The regression users actually hit: configure then clear workarounds.
+
+        Removing the last workaround leaves an empty app map, which used to
+        produce a wrapper that no longer exported LSFGVK_CONFIG at all.
+        """
+        self.service.set("1091500", self._state())
+        self.service.remove("1091500")
+
+        self.assertIn(self.service.MARKER, self.service.wrapper_path.read_text())
+        values = self._as_values(self._run_wrapper("1091500", "/usr/bin/env"))
+
+        self.assertIn("LSFGVK_CONFIG", values)
+        self.assertEqual(values["LSFGVK_CONFIG"], str(self.service.config_file_path))
+        # Workaround state is gone, so nothing per-game leaks into the env.
+        self.assertNotIn("ENABLE_GAMESCOPE_WSI", values)
+
+    def test_empty_appid_is_not_published_to_non_steam_launches(self):
+        """A non-Steam shortcut must not gain a set-but-empty SteamAppId.
+
+        A launch that distinguishes unset from empty would otherwise behave
+        differently than before the configuration export was made
+        unconditional.
+        """
+        self._write_empty_dispatcher()
+
+        values = self._as_values(self._run_wrapper(None, "/usr/bin/env"))
+
+        self.assertNotIn("SteamAppId", values)
+        self.assertIn("LSFGVK_CONFIG", values)
+
+    def test_garbage_appid_stays_untouched(self):
+        """A non-numeric SteamAppId resolves to nothing, so it is left alone."""
+        self._write_empty_dispatcher()
+
+        values = self._as_values(self._run_wrapper("not-a-number", "/usr/bin/env"))
+
+        self.assertEqual(values["SteamAppId"], "not-a-number")
+        self.assertIn("LSFGVK_CONFIG", values)
+
     def test_invalid_state_and_foreign_wrapper_fail_closed(self):
         invalid = self.service.set("0", self.service.default_state())
         self.assertFalse(invalid["success"])
