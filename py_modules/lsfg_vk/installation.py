@@ -126,13 +126,17 @@ class InstallationService(BaseService):
         temporary_path.chmod(mode)
         os.replace(temporary_path, destination)
 
-    def _align_manifest_library_path(self) -> None:
-        """Keep the installed manifest pointing at the layer actually installed.
+    def _align_manifest_library_path(self):
+        """Point the installed manifest at the layer that was installed.
 
-        Upstream ships the ARM layer under its own filename while the plugin
-        installs it under the shared name, so only the basename of the
-        ``library_path`` needs to follow.  Anything unreadable is left alone:
-        an unchanged manifest is no worse than a failed install.
+        The Vulkan loader resolves a relative ``library_path`` against the
+        manifest's own directory.  Upstream's ARM manifest carries a bare
+        filename, which would point at the manifest directory instead of the
+        library directory, so the layer is never found and no profile loads.
+        The path is rewritten relative to the manifest so it stays correct
+        wherever the payload is installed.  Unreadable or malformed manifests
+        are left alone: leaving one unchanged is no worse than a failed
+        install.
         """
         try:
             manifest = json.loads(self.json_file.read_text(encoding="utf-8"))
@@ -141,12 +145,8 @@ class InstallationService(BaseService):
         layer = manifest.get("layer") if isinstance(manifest, dict) else None
         if not isinstance(layer, dict) or "library_path" not in layer:
             return
-        current_path = str(layer["library_path"])
-        library_name = Path(current_path).name or current_path
-        if library_name == self.lib_file.name:
-            return
-        layer["library_path"] = (
-            current_path[: len(current_path) - len(library_name)] + self.lib_file.name
+        layer["library_path"] = os.path.relpath(
+            self.lib_file, self.json_file.parent
         )
         self.json_file.write_text(
             json.dumps(manifest, separators=(",", ":")) + "\n", encoding="utf-8"

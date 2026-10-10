@@ -371,7 +371,25 @@ class ArmInstallationTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.service._install_arm_layer()
 
-    def test_installed_manifest_never_points_at_uninstalled_library(self):
+    def test_manifest_resolves_to_the_installed_layer_directory(self):
+        """The manifest must point at the directory the layer was installed in.
+
+        Upstream's ARM manifest uses a bare filename, which the Vulkan loader
+        resolves against the manifest's own directory -- not the library one.
+        The layer was therefore never found, and no profile ever loaded.
+        """
+        self._patch_arch(True)
+        self._generic_archive()
+        self.service._install_archive(self.bin / "lsfg-vk-2.0.0.tar.xz")
+        self.service._install_arm_layer()
+
+        manifest = json.loads(self.service.json_file.read_text(encoding="utf-8"))
+        library_path = Path(manifest["layer"]["library_path"])
+        # A relative path must survive being resolved from the manifest's dir.
+        resolved = (self.service.json_file.parent / library_path).resolve()
+        self.assertEqual(resolved, self.service.lib_file.resolve())
+
+    def test_manifest_never_points_at_uninstalled_library(self):
         self._patch_arch(True)
         self._generic_archive()
         self.service._install_archive(self.bin / "lsfg-vk-2.0.0.tar.xz")
