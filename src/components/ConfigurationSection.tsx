@@ -15,15 +15,50 @@ function parseNames(raw: string): string[] {
     .filter(Boolean);
 }
 
+interface ExecutableNamesFieldProps {
+  activeIn: string[];
+  appid?: string;
+  onConfigChange: ConfigurationSectionProps["onConfigChange"];
+}
+
+/** The dialog itself, so React state lives in a component and not a callback. */
+function ExecutableNamesModal({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial: string;
+  onSave: (names: string[]) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(initial);
+
+  return (
+    <ModalRoot bAllowFullSize closeModal={onCancel} onCancel={onCancel}>
+      <div style={{ padding: "8px 16px 16px", display: "grid", gap: 10 }}>
+        <div style={{ fontSize: 16, fontWeight: 600 }}>Executable names</div>
+        <div style={{ opacity: 0.75, fontSize: 12, lineHeight: 1.4 }}>
+          Required on some ARM handhelds, where the Vulkan layer cannot match a
+          Steam App ID. Add the game&apos;s executable, one per line.
+        </div>
+        {/* TextField is the component that raises the Steam keyboard; a raw
+            <textarea> is inert on a gamepad. */}
+        <TextField
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <DialogButton onClick={() => onSave(parseNames(draft))}>Save</DialogButton>
+        <DialogButton onClick={onCancel}>Cancel</DialogButton>
+      </div>
+    </ModalRoot>
+  );
+}
+
 function ExecutableNamesField({
   activeIn,
   appid,
   onConfigChange,
-}: {
-  activeIn: string[];
-  appid?: string;
-  onConfigChange: ConfigurationSectionProps["onConfigChange"];
-}) {
+}: ExecutableNamesFieldProps) {
   // The Steam App ID is managed by the plugin and must stay untouched, so it
   // is filtered out of what the user edits.
   const names = activeIn.filter((entry) => entry !== appid);
@@ -32,43 +67,15 @@ function ExecutableNamesField({
   // scrolling panel, which the gamepad navigator handles poorly, and the
   // Steam keyboard opens reliably inside a dialog.
   const openEditor = () => {
-    let closeModal = () => {};
-    const [draft, setDraft] = useState(names.join("\n"));
-
-    const commit = (next: string[]) => {
-      void onConfigChange("active_in" as keyof ConfigurationData, next);
-    };
-
     const modal = showModal(
-      <ModalRoot
-        bAllowFullSize
-        closeModal={() => closeModal()}
-        onCancel={() => closeModal()}
-      >
-        <div style={{ padding: "8px 16px 16px", display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 16, fontWeight: 600 }}>Executable names</div>
-          <div style={{ opacity: 0.75, fontSize: 12, lineHeight: 1.4 }}>
-            Required on some ARM handhelds, where the Vulkan layer cannot match a
-            Steam App ID. Add the game&apos;s executable, one per line.
-          </div>
-          {/* TextField is the component that raises the Steam keyboard.  A raw
-              <textarea> is inert on a gamepad, and the reason the keyboard
-              never opened previously. */}
-          <TextField
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-          />
-          <DialogButton
-            onClick={() => {
-              commit(parseNames(draft));
-              closeModal();
-            }}
-          >
-            Save
-          </DialogButton>
-          <DialogButton onClick={() => closeModal()}>Cancel</DialogButton>
-        </div>
-      </ModalRoot>,
+      <ExecutableNamesModal
+        initial={names.join("\n")}
+        onSave={(next) => {
+          void onConfigChange("active_in" as keyof ConfigurationData, next);
+          modal.Close();
+        }}
+        onCancel={() => modal.Close()}
+      />,
       undefined,
       {
         strTitle: "Executable names",
@@ -77,7 +84,6 @@ function ExecutableNamesField({
         popupHeight: 460,
       },
     );
-    closeModal = modal.Close;
   };
 
   return (
